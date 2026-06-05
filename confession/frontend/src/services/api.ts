@@ -1,4 +1,11 @@
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
+import { Platform } from "react-native";
+
+const FALLBACK_API_BASE_URL = Platform.select({
+  android: "http://10.0.2.2:8000",
+  default: "http://127.0.0.1:8000",
+});
+
+const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || FALLBACK_API_BASE_URL;
 
 export type Role = "speaker" | "listener";
 

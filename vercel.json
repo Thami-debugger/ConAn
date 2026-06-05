@@ -4,5 +4,31 @@
     "env": {
       "UV_LINK_MODE": "copy"
     }
-  }
+  },
+  "rewrites": [
+    {
+      "source": "/health",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/ai",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/speaker/:user_id",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/listener/:user_id",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/match",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/leave/:user_id",
+      "destination": "/api/index"
+    }
+  ]
 }

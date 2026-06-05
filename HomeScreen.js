@@ -13,7 +13,7 @@ const FALLBACK_API_BASE_URL = Platform.select({
   default: typeof window !== "undefined" ? window.location.origin : "http://127.0.0.1:8000",
 });
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || FALLBACK_API_BASE_URL;
-const VOICE_THRESHOLD = 0.0035;
+const VOICE_THRESHOLD = 0.002;
 const SILENCE_DELAY_MS = 1800;
 const MATCH_POLL_INTERVAL_MS = 1000;
 const MATCH_TIMEOUT_MS = 15000;
@@ -45,6 +45,7 @@ export default function Home() {
   const lastSpeechAtRef = useRef(0);
   const heardVoiceSinceSendRef = useRef(false);
   const srAvailableRef = useRef(false);
+  const noiseFloorRef = useRef(VOICE_THRESHOLD);
 
   const pickPreferredVoice = useCallback(() => {
     if (typeof window === "undefined" || !window.speechSynthesis) return null;
@@ -220,12 +221,16 @@ export default function Home() {
           sum += c * c;
         }
         const rms = Math.sqrt(sum / data.length);
-        const boosted = Math.max(0, (rms - VOICE_THRESHOLD) * 40);
+        if (rms < 0.05) {
+          noiseFloorRef.current = noiseFloorRef.current * 0.98 + rms * 0.02;
+        }
+        const adaptiveThreshold = Math.max(0.0015, noiseFloorRef.current * 1.6, VOICE_THRESHOLD);
+        const boosted = Math.max(0, (rms - adaptiveThreshold) * 120);
         const level = Math.min(1, boosted);
-        smoothedLevelRef.current = smoothedLevelRef.current * 0.82 + level * 0.18;
+        smoothedLevelRef.current = smoothedLevelRef.current * 0.7 + level * 0.3;
         const displayLevel = smoothedLevelRef.current;
         const now = Date.now();
-        const nowTalking = displayLevel > 0.015;
+        const nowTalking = displayLevel > 0.01;
 
         if (nowTalking) {
           lastSpeechAtRef.current = now;
@@ -433,6 +438,7 @@ export default function Home() {
   const pulseOneScale = 1 + voiceLevel * 1.9;
   const pulseTwoScale = 1 + voiceLevel * 2.6;
   const pulseOpacity = micOn ? voiceLevel * 0.95 : 0;
+  const levelPct = Math.round(voiceLevel * 100);
 
   const youPanelContent = (
     <>
@@ -471,6 +477,7 @@ export default function Home() {
       </View>
       {talking && <Text style={s.speakingText}>Speaking...</Text>}
       {micOn && !talking && <Text style={s.listeningText}>Listening...</Text>}
+      {micOn && <Text style={s.micLevelText}>Mic level: {levelPct}%</Text>}
     </>
   );
 
@@ -621,6 +628,7 @@ const s = StyleSheet.create({
   dotsText: { color: "#7b63ff", fontSize: 16, marginTop: 6, letterSpacing: 3 },
   speakingText: { color: "#49d59b", fontSize: 11, marginTop: 6, fontWeight: "600" },
   listeningText: { color: "#7b63ff", fontSize: 11, marginTop: 6, fontWeight: "600" },
+  micLevelText: { color: "#8fa0d9", fontSize: 10, marginTop: 4 },
 
   // ── Bottom bar ──
   bottomBar: {

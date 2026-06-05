@@ -13,7 +13,7 @@ const FALLBACK_API_BASE_URL = Platform.select({
   default: typeof window !== "undefined" ? window.location.origin : "http://127.0.0.1:8000",
 });
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || FALLBACK_API_BASE_URL;
-const VOICE_THRESHOLD = 0.008;
+const VOICE_THRESHOLD = 0.0035;
 const SILENCE_DELAY_MS = 1800;
 const MATCH_POLL_INTERVAL_MS = 1000;
 const MATCH_TIMEOUT_MS = 15000;
@@ -160,7 +160,10 @@ export default function Home() {
   }, []);
 
   const startMic = useCallback(async () => {
-    if (typeof window === "undefined" || !navigator?.mediaDevices?.getUserMedia) return;
+    if (typeof window === "undefined" || !navigator?.mediaDevices?.getUserMedia) {
+      setStatusLine("Microphone is not supported in this browser.");
+      return;
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       audioStreamRef.current = stream;
@@ -217,12 +220,12 @@ export default function Home() {
           sum += c * c;
         }
         const rms = Math.sqrt(sum / data.length);
-        const boosted = Math.max(0, (rms - VOICE_THRESHOLD) * 28);
+        const boosted = Math.max(0, (rms - VOICE_THRESHOLD) * 40);
         const level = Math.min(1, boosted);
         smoothedLevelRef.current = smoothedLevelRef.current * 0.82 + level * 0.18;
         const displayLevel = smoothedLevelRef.current;
         const now = Date.now();
-        const nowTalking = displayLevel > 0.03;
+        const nowTalking = displayLevel > 0.015;
 
         if (nowTalking) {
           lastSpeechAtRef.current = now;
@@ -259,7 +262,7 @@ export default function Home() {
       tick();
       setMicOn(true);
     } catch (_) {
-      // mic denied — user can still type
+      setStatusLine("Microphone access blocked. Allow mic permission and try again.");
     }
   }, [sendToAi]);
 

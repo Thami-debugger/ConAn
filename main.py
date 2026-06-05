@@ -251,21 +251,27 @@ def ai_fallback(message: str):
 
 @app.post("/speaker/{user_id}")
 def join_speaker(user_id: str):
-    add_speaker(user_id)
-    return {"status": "waiting"}
+    return add_speaker(user_id)
 
 @app.post("/listener/{user_id}")
 def join_listener(user_id: str):
-    add_listener(user_id)
-    return {"status": "waiting"}
+    return add_listener(user_id)
 
 @app.get("/match")
-def match():
+def match(user_id: str | None = None):
+    if user_id:
+        return get_match_for_user(user_id)
+
     result = match_users()
 
     if result:
-        return result
+        return {"status": "matched", **result}
 
-    return {"message": "No match"}
+    return {"status": "waiting"}
+
+
+@app.post("/leave/{user_id}")
+def leave_matchmaking(user_id: str):
+    return leave(user_id)
 
 

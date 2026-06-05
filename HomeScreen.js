@@ -15,6 +15,8 @@ const FALLBACK_API_BASE_URL = Platform.select({
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || FALLBACK_API_BASE_URL;
 const VOICE_THRESHOLD = 0.008;
 const SILENCE_DELAY_MS = 1800;
+const MATCH_POLL_INTERVAL_MS = 1000;
+const MATCH_TIMEOUT_MS = 15000;
 
 export default function Home() {
   const [phase, setPhase] = useState("idle"); // idle | searching | connected
@@ -34,6 +36,9 @@ export default function Home() {
   const recogRef = useRef(null);
   const pendingRef = useRef("");
   const searchTimerRef = useRef(null);
+  const matchPollRef = useRef(null);
+  const searchTokenRef = useRef(0);
+  const userIdRef = useRef(`user-${Math.random().toString(36).slice(2, 10)}`);
   const thinkingRef = useRef(false);
   const preferredVoiceRef = useRef(null);
   const smoothedLevelRef = useRef(0);
@@ -126,7 +131,7 @@ export default function Home() {
 
   const sendToAi = useCallback(async (text) => {
     const msg = text?.trim();
-    if (!msg || thinkingRef.current) return;
+    if (!msg || thinkingRef.current || partner !== "ai") return;
     setThinking(true);
     try {
       const res = await fetch(
@@ -141,7 +146,31 @@ export default function Home() {
     } finally {
       setThinking(false);
     }
-  }, [speakText]);
+  }, [partner, speakText]);
+
+  const clearMatchSearch = useCallback(() => {
+    if (searchTimerRef.current) {
+      clearTimeout(searchTimerRef.current);
+      searchTimerRef.current = null;
+    }
+    if (matchPollRef.current) {
+      clearInterval(matchPollRef.current);
+      matchPollRef.current = null;
+    }
+  }, []);
+
+  const fallbackToAi = useCallback((chosenRole) => {
+    setPartner("ai");
+    setPhase("connected");
+    const label = chosenRole === "speaker" ? "Listener" : "Speaker";
+    setStatusLine(`No human found. Connected to AI ${label}`);
+    const greeting =
+      chosenRole === "speaker"
+        ? "Hi, I'm here to listen. Take your time - what's on your mind?"
+        : "Hello! I'm ready. Feel free to listen and respond whenever you like.";
+    speakText(greeting);
+    startMic();
+  }, [speakText, startMic]);
 
   const startMic = useCallback(async () => {
     if (typeof window === "undefined" || !navigator?.mediaDevices?.getUserMedia) return;
@@ -248,7 +277,9 @@ export default function Home() {
   }, [sendToAi]);
 
   const disconnect = useCallback(() => {
-    if (searchTimerRef.current) { clearTimeout(searchTimerRef.current); searchTimerRef.current = null; }
+    searchTokenRef.current += 1;
+    clearMatchSearch();
+    fetch(`${API_BASE_URL}/leave/${encodeURIComponent(userIdRef.current)}`, { method: "POST" }).catch(() => {});
     stopMic();
     if (typeof window !== "undefined" && window.speechSynthesis) window.speechSynthesis.cancel();
     setPhase("idle");
@@ -256,35 +287,84 @@ export default function Home() {
     setRole(null);
     setStatusLine("");
     setThinking(false);
-  }, [stopMic]);
+  }, [clearMatchSearch, stopMic]);
 
-  const connect = useCallback((chosenRole) => {
+  const connect = useCallback(async (chosenRole) => {
+    searchTokenRef.current += 1;
+    const currentSearchToken = searchTokenRef.current;
+    clearMatchSearch();
+
     setRole(chosenRole);
     setPhase("searching");
+    setPartner(null);
     const target = chosenRole === "speaker" ? "listener" : "speaker";
     setStatusLine(`Searching for a ${target}...`);
-    searchTimerRef.current = setTimeout(() => {
-      searchTimerRef.current = null;
-      setPartner("ai");
-      setPhase("connected");
-      const label = chosenRole === "speaker" ? "Listener" : "Speaker";
-      setStatusLine(`Connected to AI ${label}`);
-      const greeting =
-        chosenRole === "speaker"
-          ? "Hi, I'm here to listen. Take your time — what's on your mind?"
-          : "Hello! I'm ready. Feel free to listen and respond whenever you like.";
-      speakText(greeting);
-      startMic();
-    }, 4000);
-  }, [speakText, startMic]);
+
+    try {
+      const joinRes = await fetch(
+        `${API_BASE_URL}/${chosenRole}/${encodeURIComponent(userIdRef.current)}`,
+        { method: "POST" }
+      );
+
+      if (!joinRes.ok) {
+        throw new Error("join_failed");
+      }
+
+      const joinData = await joinRes.json();
+
+      if (searchTokenRef.current !== currentSearchToken) return;
+
+      if (joinData?.status === "matched" && joinData?.peer_id) {
+        setPartner("human");
+        setPhase("connected");
+        setStatusLine(`Connected to a human ${target}`);
+        startMic();
+        return;
+      }
+
+      searchTimerRef.current = setTimeout(() => {
+        if (searchTokenRef.current !== currentSearchToken) return;
+        clearMatchSearch();
+        fallbackToAi(chosenRole);
+      }, MATCH_TIMEOUT_MS);
+
+      matchPollRef.current = setInterval(async () => {
+        try {
+          const pollRes = await fetch(`${API_BASE_URL}/match?user_id=${encodeURIComponent(userIdRef.current)}`);
+          if (!pollRes.ok) return;
+
+          const pollData = await pollRes.json();
+          if (searchTokenRef.current !== currentSearchToken) return;
+
+          if (pollData?.status === "matched" && pollData?.peer_id) {
+            clearMatchSearch();
+            setPartner("human");
+            setPhase("connected");
+            setStatusLine(`Connected to a human ${target}`);
+            startMic();
+          }
+        } catch (_) {
+          // keep polling while searching
+        }
+      }, MATCH_POLL_INTERVAL_MS);
+    } catch (_) {
+      if (searchTokenRef.current !== currentSearchToken) return;
+      clearMatchSearch();
+      setPhase("idle");
+      setStatusLine("");
+      speakText("Connection error. Please check the backend.");
+    }
+  }, [clearMatchSearch, fallbackToAi, speakText, startMic]);
 
   useEffect(() => {
     return () => {
+      searchTokenRef.current += 1;
+      clearMatchSearch();
+      fetch(`${API_BASE_URL}/leave/${encodeURIComponent(userIdRef.current)}`, { method: "POST" }).catch(() => {});
       stopMic();
-      if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
       if (typeof window !== "undefined" && window.speechSynthesis) window.speechSynthesis.cancel();
     };
-  }, [stopMic]);
+  }, [clearMatchSearch, stopMic]);
 
   // ── IDLE ──────────────────────────────────────────────────────────────────
   if (phase === "idle") {

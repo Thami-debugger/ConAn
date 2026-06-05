@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from matchmaking import *
 from ai_listener import listen
+from transcript_store import store_ai_turn
 
 
 signal_rooms = {}
@@ -245,8 +246,28 @@ async def websocket_signaling(session_id: str, websocket: WebSocket):
 
 
 @app.post("/ai")
-def ai_fallback(message: str):
+def ai_fallback(message: str, user_id: str | None = None, session_id: str | None = None):
+    normalized = (message or "").strip()
+    if normalized:
+        store_ai_turn(
+            role="user",
+            message=normalized,
+            user_id=user_id,
+            session_id=session_id,
+            source="ai_fallback",
+        )
+
     response = listen(message)
+
+    if response:
+        store_ai_turn(
+            role="assistant",
+            message=response,
+            user_id=user_id,
+            session_id=session_id,
+            source="ai_fallback",
+        )
+
     return {"response": response}
 
 @app.post("/speaker/{user_id}")

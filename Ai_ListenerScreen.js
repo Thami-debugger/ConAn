@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { View, TextInput, Button, Text, Platform } from "react-native";
 import axios from "axios";
 
@@ -12,6 +12,8 @@ export default function Chat() {
 
   const [message, setMessage] = useState("");
   const [response, setResponse] = useState("");
+  const userIdRef = useRef(`user-${Math.random().toString(36).slice(2, 10)}`);
+  const sessionIdRef = useRef(`session-${Math.random().toString(36).slice(2, 12)}`);
 
   const send = async () => {
     try {
@@ -20,7 +22,9 @@ export default function Chat() {
         null,
         {
           params: {
-            message
+            message,
+            user_id: userIdRef.current,
+            session_id: sessionIdRef.current,
           }
         }
       );

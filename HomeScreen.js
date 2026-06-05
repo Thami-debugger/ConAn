@@ -39,6 +39,7 @@ export default function Home() {
   const matchPollRef = useRef(null);
   const searchTokenRef = useRef(0);
   const userIdRef = useRef(`user-${Math.random().toString(36).slice(2, 10)}`);
+  const sessionIdRef = useRef(`session-${Math.random().toString(36).slice(2, 12)}`);
   const thinkingRef = useRef(false);
   const preferredVoiceRef = useRef(null);
   const smoothedLevelRef = useRef(0);
@@ -136,7 +137,7 @@ export default function Home() {
     setThinking(true);
     try {
       const res = await fetch(
-        `${API_BASE_URL}/ai?message=${encodeURIComponent(msg)}`,
+        `${API_BASE_URL}/ai?message=${encodeURIComponent(msg)}&user_id=${encodeURIComponent(userIdRef.current)}&session_id=${encodeURIComponent(sessionIdRef.current)}`,
         { method: "POST" }
       );
       const data = await res.json();
@@ -303,6 +304,7 @@ export default function Home() {
     clearMatchSearch();
 
     setRole(chosenRole);
+    sessionIdRef.current = `session-${Math.random().toString(36).slice(2, 12)}`;
     setPhase("searching");
     setPartner(null);
     const target = chosenRole === "speaker" ? "listener" : "speaker";

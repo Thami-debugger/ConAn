@@ -159,19 +159,6 @@ export default function Home() {
     }
   }, []);
 
-  const fallbackToAi = useCallback((chosenRole) => {
-    setPartner("ai");
-    setPhase("connected");
-    const label = chosenRole === "speaker" ? "Listener" : "Speaker";
-    setStatusLine(`No human found. Connected to AI ${label}`);
-    const greeting =
-      chosenRole === "speaker"
-        ? "Hi, I'm here to listen. Take your time - what's on your mind?"
-        : "Hello! I'm ready. Feel free to listen and respond whenever you like.";
-    speakText(greeting);
-    startMic();
-  }, [speakText, startMic]);
-
   const startMic = useCallback(async () => {
     if (typeof window === "undefined" || !navigator?.mediaDevices?.getUserMedia) return;
     try {
@@ -275,6 +262,19 @@ export default function Home() {
       // mic denied — user can still type
     }
   }, [sendToAi]);
+
+  const fallbackToAi = useCallback((chosenRole) => {
+    setPartner("ai");
+    setPhase("connected");
+    const label = chosenRole === "speaker" ? "Listener" : "Speaker";
+    setStatusLine(`No human found. Connected to AI ${label}`);
+    const greeting =
+      chosenRole === "speaker"
+        ? "Hi, I'm here to listen. Take your time - what's on your mind?"
+        : "Hello! I'm ready. Feel free to listen and respond whenever you like.";
+    speakText(greeting);
+    startMic();
+  }, [speakText, startMic]);
 
   const disconnect = useCallback(() => {
     searchTokenRef.current += 1;

@@ -8,27 +8,27 @@
   "rewrites": [
     {
       "source": "/health",
-      "destination": "/api/index"
+      "destination": "/api/index.py"
     },
     {
       "source": "/ai",
-      "destination": "/api/index"
+      "destination": "/api/index.py"
     },
     {
       "source": "/speaker/:user_id",
-      "destination": "/api/index"
+      "destination": "/api/index.py"
     },
     {
       "source": "/listener/:user_id",
-      "destination": "/api/index"
+      "destination": "/api/index.py"
     },
     {
       "source": "/match",
-      "destination": "/api/index"
+      "destination": "/api/index.py"
     },
     {
       "source": "/leave/:user_id",
-      "destination": "/api/index"
+      "destination": "/api/index.py"
     }
   ]
 }

@@ -12,19 +12,30 @@ def run_smoke_test() -> int:
     checks.append(("GET /health", health.status_code == 200 and health.json().get("status") == "ok", health.json()))
 
     empty_match = client.get("/match")
-    checks.append(("GET /match (empty)", empty_match.status_code == 200 and "message" in empty_match.json(), empty_match.json()))
+    checks.append((
+        "GET /match (empty)",
+        empty_match.status_code == 200 and empty_match.json().get("status") == "waiting",
+        empty_match.json(),
+    ))
 
     speaker = client.post("/speaker/smoke-speaker")
     checks.append(("POST /speaker", speaker.status_code == 200 and speaker.json().get("status") == "waiting", speaker.json()))
 
     listener = client.post("/listener/smoke-listener")
-    checks.append(("POST /listener", listener.status_code == 200 and listener.json().get("status") == "waiting", listener.json()))
+    listener_data = listener.json()
+    checks.append((
+        "POST /listener",
+        listener.status_code == 200
+        and listener_data.get("status") == "matched"
+        and listener_data.get("peer_id") == "smoke-speaker",
+        listener_data,
+    ))
 
-    match = client.get("/match")
+    match = client.get("/match", params={"user_id": "smoke-speaker"})
     data = match.json()
     checks.append((
-        "GET /match (paired)",
-        match.status_code == 200 and data.get("speaker") == "smoke-speaker" and data.get("listener") == "smoke-listener",
+        "GET /match (paired user)",
+        match.status_code == 200 and data.get("status") == "matched" and data.get("peer_id") == "smoke-listener",
         data,
     ))
 

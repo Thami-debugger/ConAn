@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Confession Admin Dashboard</title>
+  <style>
+    body { font-family: Segoe UI, sans-serif; background: #0b1021; color: #e9edff; margin: 0; padding: 24px; }
+    h1 { margin: 0 0 16px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+    .card { background: #111a33; border: 1px solid #27335f; border-radius: 12px; padding: 16px; }
+    .label { color: #b2bee8; font-size: 14px; }
+    .value { font-size: 24px; font-weight: 700; margin-top: 6px; }
+  </style>
+</head>
+<body>
+  <h1>Confession Admin Dashboard</h1>
+  <p>Use API endpoint <code>/v1/admin/summary</code> with header <code>x-admin-key</code> to fetch live metrics.</p>
+  <div class="grid">
+    <div class="card"><div class="label">Sessions Today</div><div class="value">API-driven</div></div>
+    <div class="card"><div class="label">AI Session Ratio</div><div class="value">API-driven</div></div>
+    <div class="card"><div class="label">Avg Sentiment</div><div class="value">API-driven</div></div>
+    <div class="card"><div class="label">Top Topic</div><div class="value">API-driven</div></div>
+  </div>
+</body>
+</html>

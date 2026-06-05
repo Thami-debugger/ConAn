@@ -8,7 +8,7 @@ import {
 } from "react-native";
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
-const VOICE_THRESHOLD = 0.018;
+const VOICE_THRESHOLD = 0.008;
 const SILENCE_DELAY_MS = 1800;
 
 export default function Home() {
@@ -27,29 +27,73 @@ export default function Home() {
   const analyserRef = useRef(null);
   const rafRef = useRef(null);
   const recogRef = useRef(null);
-  const silenceRef = useRef(null);
-  const wasTalkingRef = useRef(false);
   const pendingRef = useRef("");
   const searchTimerRef = useRef(null);
   const thinkingRef = useRef(false);
+  const preferredVoiceRef = useRef(null);
+  const smoothedLevelRef = useRef(0);
+  const lastSpeechAtRef = useRef(0);
+  const heardVoiceSinceSendRef = useRef(false);
+  const srAvailableRef = useRef(false);
+
+  const pickPreferredVoice = useCallback(() => {
+    if (typeof window === "undefined" || !window.speechSynthesis) return null;
+    const voices = window.speechSynthesis.getVoices();
+    if (!voices?.length) return null;
+
+    const englishVoices = voices.filter((v) => /^en([-_]|$)/i.test(v.lang || ""));
+    const pool = englishVoices.length ? englishVoices : voices;
+    const femaleHints = [
+      /female/i,
+      /woman/i,
+      /samantha/i,
+      /victoria/i,
+      /zira/i,
+      /aria/i,
+      /ava/i,
+      /allison/i,
+      /jenny/i,
+    ];
+
+    const female = pool.find((v) => femaleHints.some((rx) => rx.test(v.name || "")));
+    return female || pool[0] || null;
+  }, []);
 
   useEffect(() => {
     thinkingRef.current = thinking;
   }, [thinking]);
 
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.speechSynthesis) return;
+    const primeVoices = () => {
+      preferredVoiceRef.current = pickPreferredVoice();
+    };
+    primeVoices();
+    window.speechSynthesis.addEventListener("voiceschanged", primeVoices);
+    return () => {
+      window.speechSynthesis.removeEventListener("voiceschanged", primeVoices);
+    };
+  }, [pickPreferredVoice]);
+
   const speakText = useCallback((text) => {
     if (typeof window === "undefined" || !window.speechSynthesis || !text?.trim()) return;
     const u = new SpeechSynthesisUtterance(text.trim());
-    u.lang = "en-US";
+    const selectedVoice = preferredVoiceRef.current || pickPreferredVoice();
+    if (selectedVoice) {
+      u.voice = selectedVoice;
+      u.lang = selectedVoice.lang || "en-US";
+      preferredVoiceRef.current = selectedVoice;
+    } else {
+      u.lang = "en-US";
+    }
     u.rate = 1;
-    u.pitch = 1;
+    u.pitch = 1.1;
     window.speechSynthesis.cancel();
     window.speechSynthesis.speak(u);
-  }, []);
+  }, [pickPreferredVoice]);
 
   const stopMic = useCallback(() => {
     if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
-    if (silenceRef.current) { clearTimeout(silenceRef.current); silenceRef.current = null; }
     if (recogRef.current) {
       recogRef.current.onresult = null;
       recogRef.current.onend = null;
@@ -65,8 +109,11 @@ export default function Home() {
       audioCtxRef.current = null;
     }
     analyserRef.current = null;
-    wasTalkingRef.current = false;
     pendingRef.current = "";
+    lastSpeechAtRef.current = 0;
+    heardVoiceSinceSendRef.current = false;
+    srAvailableRef.current = false;
+    smoothedLevelRef.current = 0;
     setMicOn(false);
     setVoiceLevel(0);
     setTalking(false);
@@ -99,14 +146,19 @@ export default function Home() {
       const ACtx = window.AudioContext || window.webkitAudioContext;
       const ctx = new ACtx();
       audioCtxRef.current = ctx;
+      if (ctx.state === "suspended") {
+        try { await ctx.resume(); } catch (_) {}
+      }
       const src = ctx.createMediaStreamSource(stream);
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 512;
+      analyser.smoothingTimeConstant = 0.8;
       src.connect(analyser);
       analyserRef.current = analyser;
 
       const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (SR) {
+        srAvailableRef.current = true;
         const recog = new SR();
         recog.continuous = true;
         recog.interimResults = true;
@@ -114,16 +166,24 @@ export default function Home() {
         recog.onresult = (e) => {
           let t = "";
           for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript;
-          pendingRef.current = t.trim();
+          const cleaned = t.trim();
+          if (cleaned) {
+            pendingRef.current = cleaned;
+            lastSpeechAtRef.current = Date.now();
+          }
         };
         recog.onend = () => {
           if (audioStreamRef.current) {
             try { recog.start(); } catch (_) {}
           }
         };
-        recog.onerror = () => {};
+        recog.onerror = () => {
+          srAvailableRef.current = false;
+        };
         recog.start();
         recogRef.current = recog;
+      } else {
+        srAvailableRef.current = false;
       }
 
       const data = new Uint8Array(analyser.frequencyBinCount);
@@ -136,27 +196,43 @@ export default function Home() {
           sum += c * c;
         }
         const rms = Math.sqrt(sum / data.length);
-        const level = Math.min(1, rms * 8);
-        const nowTalking = rms > VOICE_THRESHOLD;
-        setVoiceLevel(level);
-        setTalking(nowTalking);
+        const boosted = Math.max(0, (rms - VOICE_THRESHOLD) * 28);
+        const level = Math.min(1, boosted);
+        smoothedLevelRef.current = smoothedLevelRef.current * 0.82 + level * 0.18;
+        const displayLevel = smoothedLevelRef.current;
+        const now = Date.now();
+        const nowTalking = displayLevel > 0.03;
 
         if (nowTalking) {
-          wasTalkingRef.current = true;
-          if (silenceRef.current) { clearTimeout(silenceRef.current); silenceRef.current = null; }
-        } else if (wasTalkingRef.current && pendingRef.current && !thinkingRef.current) {
-          if (!silenceRef.current) {
-            silenceRef.current = setTimeout(() => {
-              silenceRef.current = null;
-              const toSend = pendingRef.current;
-              if (toSend) {
-                pendingRef.current = "";
-                wasTalkingRef.current = false;
-                sendToAi(toSend);
-              }
-            }, SILENCE_DELAY_MS);
-          }
+          lastSpeechAtRef.current = now;
+          heardVoiceSinceSendRef.current = true;
         }
+
+        if (
+          pendingRef.current &&
+          !thinkingRef.current &&
+          lastSpeechAtRef.current > 0 &&
+          now - lastSpeechAtRef.current >= SILENCE_DELAY_MS
+        ) {
+          const toSend = pendingRef.current;
+          pendingRef.current = "";
+          heardVoiceSinceSendRef.current = false;
+          sendToAi(toSend);
+        } else if (
+          heardVoiceSinceSendRef.current &&
+          !thinkingRef.current &&
+          lastSpeechAtRef.current > 0 &&
+          now - lastSpeechAtRef.current >= SILENCE_DELAY_MS + 250
+        ) {
+          heardVoiceSinceSendRef.current = false;
+          const fallback = srAvailableRef.current
+            ? "I was speaking just now. Please respond with supportive suggestions and ask one clear follow-up question."
+            : "Speech recognition is unavailable. Please give a brief supportive response and ask me to repeat or type one sentence.";
+          sendToAi(fallback);
+        }
+
+        setVoiceLevel(displayLevel);
+        setTalking(nowTalking);
         rafRef.current = requestAnimationFrame(tick);
       };
       tick();
@@ -195,7 +271,7 @@ export default function Home() {
       speakText(greeting);
       startMic();
     }, 4000);
-  }, [pushMessage, speakText, startMic]);
+  }, [speakText, startMic]);
 
   useEffect(() => {
     return () => {
@@ -259,6 +335,67 @@ export default function Home() {
   }
 
   // ── CONNECTED — Omegle-style single screen ────────────────────────────────
+  const remoteLabel = partner === "ai"
+    ? role === "speaker"
+      ? "AI Listener"
+      : "AI Speaker"
+    : "Stranger";
+  const leftPanelIsYou = role === "speaker";
+  const userScale = 1 + voiceLevel * 0.95;
+  const pulseOneScale = 1 + voiceLevel * 1.9;
+  const pulseTwoScale = 1 + voiceLevel * 2.6;
+  const pulseOpacity = micOn ? voiceLevel * 0.95 : 0;
+
+  const youPanelContent = (
+    <>
+      <Text style={s.vLabel}>You {role === "speaker" ? "(Speaker)" : "(Listener)"}</Text>
+      <View style={s.vAvatarWrap}>
+        <View
+          style={[
+            s.vPulse,
+            {
+              opacity: pulseOpacity,
+              transform: [{ scale: pulseOneScale }],
+            },
+          ]}
+        />
+        <View
+          style={[
+            s.vPulse,
+            s.vPulseAlt,
+            {
+              opacity: pulseOpacity * 0.75,
+              transform: [{ scale: pulseTwoScale }],
+            },
+          ]}
+        />
+        <View
+          style={[
+            s.vAvatar,
+            {
+              borderColor: talking ? "#49d59b" : micOn ? "#3b59d4" : "#3f4f87",
+              transform: [{ scale: userScale }],
+            },
+          ]}
+        >
+          <Text style={s.vAvatarText}>{talking ? "🔊" : micOn ? "🎙" : "🔇"}</Text>
+        </View>
+      </View>
+      {talking && <Text style={s.speakingText}>Speaking...</Text>}
+      {micOn && !talking && <Text style={s.listeningText}>Listening...</Text>}
+    </>
+  );
+
+  const remotePanelContent = (
+    <>
+      <Text style={s.vLabel}>{remoteLabel}</Text>
+      <View style={[s.vAvatar, { borderColor: "#7b63ff" }]}>
+        <Text style={s.vAvatarText}>{partner === "ai" ? "AI" : "👤"}</Text>
+      </View>
+      {thinking && <Text style={s.dotsText}>●●●</Text>}
+    </>
+  );
+
   return (
     <SafeAreaView style={s.root}>
       {/* Status bar */}
@@ -274,38 +411,11 @@ export default function Home() {
       {/* Two voice panels — Omegle-style split */}
       <View style={s.voicePanels}>
         <View style={[s.vPanel, s.vPanelLeft]}>
-          <Text style={s.vLabel}>{partner === "ai" ? "AI Listener" : "Stranger"}</Text>
-          <View style={[s.vAvatar, { borderColor: "#7b63ff" }]}>
-            <Text style={s.vAvatarText}>{partner === "ai" ? "AI" : "👤"}</Text>
-          </View>
-          {thinking && <Text style={s.dotsText}>●●●</Text>}
+          {leftPanelIsYou ? youPanelContent : remotePanelContent}
         </View>
-
-        <View style={[s.vPanel, s.vPanelRight]}>
-          <Text style={s.vLabel}>You {role === "speaker" ? "(Speaker)" : "(Listener)"}</Text>
-          <View
-            style={[
-              s.vAvatar,
-              {
-                borderColor: talking ? "#49d59b" : micOn ? "#3b59d4" : "#3f4f87",
-                transform: [{ scale: 1 + voiceLevel * 0.3 }],
-              },
-            ]}
-          >
-            <Text style={s.vAvatarText}>{talking ? "🔊" : micOn ? "🎙" : "🔇"}</Text>
-          </View>
-          {talking && <Text style={s.speakingText}>Speaking...</Text>}
-          {micOn && !talking && <Text style={s.listeningText}>Listening...</Text>}
+        <View style={s.vPanel}>
+          {leftPanelIsYou ? remotePanelContent : youPanelContent}
         </View>
-      </View>
-
-      {/* Thinking indicator */}
-      <View style={s.thinkingWrap}>
-        {thinking && (
-          <View style={s.thinkingBadge}>
-            <Text style={s.thinkingText}>●●●</Text>
-          </View>
-        )}
       </View>
 
       {/* End session */}
@@ -389,34 +499,40 @@ const s = StyleSheet.create({
 
   // ── Voice panels ──
   voicePanels: {
-    flexDirection: "row", height: 160,
+    flex: 1, flexDirection: "row",
     borderBottomWidth: 1, borderBottomColor: "#111d3f",
   },
   vPanel: { flex: 1, justifyContent: "center", alignItems: "center", paddingVertical: 10 },
   vPanelLeft: { borderRightWidth: 1, borderRightColor: "#111d3f" },
-  vPanelRight: {},
   vLabel: {
     color: "#8fa0d9", fontSize: 11, fontWeight: "600",
     marginBottom: 8, textTransform: "uppercase", letterSpacing: 1,
   },
+  vAvatarWrap: {
+    width: 280, height: 280,
+    justifyContent: "center", alignItems: "center",
+    marginBottom: 2,
+  },
+  vPulse: {
+    position: "absolute",
+    width: 190, height: 190, borderRadius: 95,
+    borderWidth: 2,
+    borderColor: "#49d59b",
+    backgroundColor: "rgba(73,213,155,0.08)",
+  },
+  vPulseAlt: {
+    borderColor: "#3b59d4",
+    backgroundColor: "rgba(59,89,212,0.08)",
+  },
   vAvatar: {
-    width: 72, height: 72, borderRadius: 36, borderWidth: 2,
+    width: 132, height: 132, borderRadius: 66, borderWidth: 2,
     backgroundColor: "rgba(97,73,188,0.18)",
     justifyContent: "center", alignItems: "center",
   },
-  vAvatarText: { fontSize: 28 },
+  vAvatarText: { fontSize: 42 },
   dotsText: { color: "#7b63ff", fontSize: 16, marginTop: 6, letterSpacing: 3 },
   speakingText: { color: "#49d59b", fontSize: 11, marginTop: 6, fontWeight: "600" },
   listeningText: { color: "#7b63ff", fontSize: 11, marginTop: 6, fontWeight: "600" },
-
-  // ── Thinking ──
-  thinkingWrap: { flex: 1, justifyContent: "center", alignItems: "center" },
-  thinkingBadge: {
-    backgroundColor: "rgba(30,42,81,0.9)", borderRadius: 24,
-    paddingHorizontal: 24, paddingVertical: 12,
-    borderWidth: 1, borderColor: "#2f3f74",
-  },
-  thinkingText: { color: "#7b63ff", fontSize: 22, letterSpacing: 6 },
 
   // ── Bottom bar ──
   bottomBar: {
